@@ -1,4 +1,4 @@
-# Pololu_coordination
+# PoloGridRunners
 # Multi-Agent Grid Navigation with MQTT and Pololu Robots
 
 ## Overview
