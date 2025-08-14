@@ -22,27 +22,60 @@ This project implements a coordinated control system for **Pololu 3pi+ 2040 OLED
 
 ---
 
-## System Architecture
-       +------------------+
-       |   MQTT Hub (PC)  |
-       |  MQTT_hub.py     |
-       +--------+---------+
-                |
-        MQTT over LAN
-                |
-       +--------+---------+
-       |   MQTT Broker    |
-       +--------+---------+
-                |
-+------+-------+ +------+-------+
-| ESP32 #1 | | ESP32 #2 | ...
-| esp32_general| | esp32_general|
-+------+-------+ +------+-------+
-| UART | UART
-+------+-------+ +------+-------+
-| Pololu Robot | | Pololu Robot |
-| pololu_code | | pololu_code |
-+--------------+ +--------------+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                          SYSTEM ARCHITECTURE OVERVIEW                         │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+                               (LAN / Wi‑Fi Network)
+┌─────────────────────┐           MQTT over TCP            ┌───────────────────┐
+│  Control Computer   │  ─────────────────────────────────▶│   MQTT Broker     │
+│  (runs MQTT_hub.py) │◀───────────────────────────────────┤ (e.g., Mosquitto) │
+│  - Assigns moves    │        status/telemetry topics      └───────────────────┘
+│  - Parses events    │
+│  - Global stop      │
+└─────────┬───────────┘
+          │ publishes commands (e.g., "00/command", "general/command")
+          │ subscribes to status  (e.g., "00/status")
+          │
+          │
+          │                              (one per robot)
+          │                   ┌───────────────────────────────────┐
+          │                   │               Robot i              │
+          │                   │                                   │
+          │         MQTT      │  ┌─────────────────────────────┐  │  UART (3.3V)
+          ├────────────────────▶ │         ESP32 Bridge        │ ─┼──────────────▶
+          │         topics     │  │  esp32_general.ino         │  │  Pololu 3pi+ 2040
+          │ (i: "0i/command",  │  │  - Wi‑Fi + MQTT client     │  │  pololu_code.py
+          │  "0i/status")      │  │  - Sub cmd / Pub status    │  │  - Line follow + PID
+          │                   │  │  - UART <-> Robot bridge    │  │  - Intersection count
+          │                   │  └─────────────────────────────┘  │  - Grid waypoint nav
+          │                   │                                   │  - Reports: x/y, events
+          │                   └───────────────────────────────────┘     (e.g., "bingo", "line")
+          │
+          │                   ┌───────────────────────────────────┐
+          │                   │               Robot j              │
+          │                   │          (same as above)           │
+          │                   └───────────────────────────────────┘
+          │
+          └────────────── (…repeat for additional robots: 00, 01, 02, 03, …)
+
+LEGEND / TOPICS
+- Commands from Hub → Robot i:          "0i/command"   (payload examples: "1", "L", "R", "stop")
+- Global command from Hub → All:        "general/command" (e.g., "stop" for emergency halt)
+- Status from Robot i (via ESP32) → Hub:"0i/status"    (payload examples: "x/y", "line:x/y", "bingo:x/y")
+
+DATA FLOW SUMMARY
+1) Hub publishes step commands or waypoints via MQTT to each robot’s command topic.
+2) ESP32 Bridge (on each robot) receives MQTT messages and relays them over UART to the Pololu.
+3) Pololu runs grid navigation (line‑following + intersection counting), then returns updates/events.
+4) ESP32 publishes robot status/events back to MQTT; Hub reads status and adapts next commands.
+5) On critical events ("line", "bingo"), Hub can broadcast "stop" to all robots via "general/command".
+
+NOTES
+- The MQTT Broker can run on the same PC as the Hub or on another LAN machine/router.
+- Ensure consistent SSID/password and Broker IP in esp32_general.ino and MQTT_hub.py.
+- UART wiring for Pololu 3pi+ 2040 (typical): TX=GP28, RX=GP29, 3.3V logic level.
+
 
 ---
 
